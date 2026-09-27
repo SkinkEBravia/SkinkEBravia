@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SkinkEBravia — Signal</title>
+<style>
+  @font-face { font-family: "Unbounded"; font-weight: 900; src: url(fonts/Unbounded-Black.woff2) format("woff2"); }
+  @font-face { font-family: "JBM"; font-weight: 500; src: url(fonts/JetBrainsMono-Medium.woff2) format("woff2"); }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  body { display: grid; place-items: center; }
+  canvas { width: 100vw; max-width: 1920px; aspect-ratio: 8 / 3; display: block; image-rendering: pixelated; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<script>
+/*
+ * SIGNAL — a render pipeline eating itself.
+ *
+ * Pass A  raymarches an iridescent gyroid sculpture and composites the type.
+ *         During corruption bursts, macroblocks leak the renderer's own AOVs
+ *         (normals, depth, iteration heat) into the beauty pass.
+ * Pass B  glitch post: macroblock displacement, slice tearing, pixel-sort
+ *         smear, chroma split, posterized datamosh, scanlines, flash-invert.
+ *
+ * Live:     open studio/index.html            (move the mouse to disturb it)
+ * Capture:  studio/capture.mjs drives ?capture and writes deterministic frames.
+ */
+const W = 960, H = 360;
+const FRAMES = 96;                      // one loop
+const CAPTURE = location.search.includes("capture");
+const TITLE = "SKINKEBRAVIA";
+
+const canvas = document.getElementById("gl");
+canvas.width = W; canvas.height = H;
+const gl = canvas.getContext("webgl2", { preserveDrawingBuffer: true, antialias: false });
+
+// ---------------------------------------------------------------- shaders
+const VS = `#version 300 es
+in vec2 p; out vec2 uv;
+void main(){ uv = p*.5+.5; gl_Position = vec4(p,0,1); }`;
+
+const COMMON = `#version 300 es
+precision highp float;
+in vec2 uv; out vec4 o;
+uniform vec2 R; uniform float T; uniform float B; uniform float S;
+#define TAU 6.28318530718
+float h1(float n){ return fract(sin(n*127.1)*43758.5453); }
+float h2(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
+`;
+
+const SCENE = COMMON + `
+uniform sampler2D TXT;
+mat2 rot(float a){ float c=cos(a), s=sin(a); return mat2(c,-s,s,c); }
+
+float map(vec3 p){
+  p.xz *= rot(TAU*T);
+  p.xy *= rot(.35*sin(TAU*T));
+  float k = 4.3 + .8*sin(TAU*T);
+  vec3 q = p*k;
+  float g = abs(dot(sin(q), cos(q.zxy)))/k - .04;     // gyroid shell
+  float s = length(p) - 1.12;
+  float body = max(s, g*.75);
+  float core = length(p) - (.42 + .06*sin(TAU*2.*T));  // pulsing core
+  return min(body, core);
+}
+vec3 nrm(vec3 p){
+  vec2 e = vec2(.0015,0);
+  return normalize(vec3(map(p+e.xyy)-map(p-e.xyy), map(p+e.yxy)-map(p-e.yxy), map(p+e.yyx)-map(p-e.yyx)));
+}
+vec3 env(vec3 d){
+  // studio: black cyc, two strip softboxes, coloured kickers
+  vec3 c = vec3(.004,.004,.007);
+  c += vec3(1.)*smoothstep(.97,.99, abs(d.x*.8+d.y*.6))*1.6;
+  c += vec3(1.)*smoothstep(.93,.96, d.y)*2.2;
+  c += vec3(1.,.08,.35)*pow(max(0.,-d.x),6.)*1.4;
+  c += vec3(0.,.9,1.)*pow(max(0., d.x*.7-d.y*.7),5.)*1.3;
+  return c;
+}
+
+void main(){
+  vec2 f = uv*R;
+  // macroblocks shared with the post pass so AOV leaks line up with tears
+  float bs = mix(24., 48., h1(floor(S*7.)));
+  vec2 blk = floor(f/bs);
+  float bh = h2(blk + floor(S*13.));
+  int aov = B > .05 && bh < B*.5 ? int(mod(bh*97., 3.)) + 1 : 0;
+
+  vec2 p = (f - .5*R)/R.y;
+  vec3 ro = vec3(0,0,3.6), rd = normalize(vec3(p, -1.55));
+  float t = 0., d; int i;
+  for(i=0;i<110;i++){ d = map(ro+rd*t); if(d<.0008 || t>8.) break; t += d*.8; }
+  vec3 col = vec3(0);
+  bool hit = t < 8.;
+
+  // backdrop: deep black, faint dot grid, horizon glow
+  vec2 g = fract(f/16.) - .5;
+  col += vec3(.06,.07,.09) * smoothstep(.09,.0,length(g)) * .8;
+  col += vec3(.18,.02,.10) * exp(-abs(p.y+.02)*9.) * .35;
+
+  vec3 n = vec3(0);
+  if(hit){
+    vec3 pos = ro+rd*t; n = nrm(pos);
+    vec3 r = reflect(rd, n);
+    float fr = pow(1.-max(0.,dot(n,-rd)), 2.);
+    // thin-film iridescence driven by view angle + a travelling phase
+    vec3 film = .5+.5*cos(TAU*(fr*1.6 + dot(n, vec3(.3,.5,.2)) + T + vec3(0.,.33,.67)));
+    col = env(r) * mix(vec3(.9), film*1.5, .75);
+    col += film * fr * .35;
+    float ao = clamp(map(pos+n*.08)/.08, 0., 1.);
+    col *= .35 + .65*ao;
+    if(length(pos) < .52) col = vec3(1.,.25,.1)*2.5*(1.-fr) + env(r); // hot core
+  }
+
+  // AOV leaks: the renderer's debug buffers bleed into the frame
+  if(!hit) aov = 0;
+  if(aov == 1) col = hit ? n*.5+.5 : vec3(.02,.02,.1);
+  if(aov == 2) col = vec3(hit ? pow(1.-(t-2.)/3., 2.) : 0.);
+  if(aov == 3){ float x = float(i)/110.; col = .5+.5*cos(TAU*(x*.9 + vec3(.0,.1,.2))); col *= x*1.6; }
+
+  // typography: title in difference blend, HUD additive
+  vec4 tx = texture(TXT, vec2(uv.x, 1.-uv.y));
+  col = mix(col, abs(vec3(1.) - col), tx.r);
+  col += tx.g * vec3(.85,.87,.9);
+  col = mix(col, vec3(1.,.12,.28), tx.b);                // accent (rec dot, bars)
+
+  o = vec4(col, 1.);
+}`;
+
+const POST = COMMON + `
+uniform sampler2D SRC;
+vec3 tone(vec3 c){ c = max(c, 0.); return c*(2.51*c+.03)/(c*(2.43*c+.59)+.14); } // ACES fit
+vec3 smp(vec2 u){ return texture(SRC, u).rgb; }
+
+void main(){
+  vec2 f = uv*R, u = uv;
+  float fs = floor(S*13.);
+
+  // slice tearing
+  float band = floor(f.y / mix(4., 38., h1(floor(f.y/41.)+fs)));
+  float bh = h1(band + fs*1.7);
+  if(bh < B*.32) u.x += (h1(band*3.1+fs) - .5) * .35 * B;
+
+  // macroblock displacement / swap
+  float bs = mix(24., 48., h1(floor(S*7.)));
+  vec2 blk = floor(f/bs);
+  float kh = h2(blk + fs);
+  if(kh < B*.16) u += (vec2(h2(blk+3.1+fs), h2(blk+7.7+fs)) - .5) * vec2(.25,.12) * B;
+
+  // quantize inside corrupted blocks (datamosh macroblocks)
+  bool mosh = h2(blk*1.3 + fs + 5.) < B*.14;
+  if(mosh) u = (floor(u*R/8.)*8. + 4.)/R;
+
+  // chroma split, stronger at edges and in bursts
+  float ca = (.0016 + .018*B*B) * (1. + 1.5*abs(uv.x-.5));
+  vec3 col = vec3(smp(u + vec2(ca,0)).r, smp(u).g, smp(u - vec2(ca, ca*.3)).b);
+
+  // pixel-sort smear: bright pixels drag sideways in selected rows
+  if(h1(floor(f.y/3.) + fs*.37) < B*.22){
+    for(int k=1;k<14;k++){
+      vec3 c2 = smp(u - vec2(float(k)*.006*B, 0.));
+      if(dot(c2, vec3(.3,.59,.11)) > dot(col, vec3(.3,.59,.11))) col = c2;
+    }
+  }
+  if(mosh) col = floor(col*4.)/4.;
+
+  col = tone(col*1.15);
+  col *= .88 + .12*sin(f.y*3.14159);                   // scanlines
+  col += vec3(.035,.04,.05) * smoothstep(.02,.0,abs(fract(uv.y*.7 - T*2.)-.5)); // roll bar
+  vec2 v = uv-.5; col *= 1. - dot(v*vec2(.9,1.5), v*vec2(.9,1.5));
+  col += (h2(f + fs) - .5) * .04 * B * B;                  // burst noise only
+  if(B > .92 && h1(fs) < .5) col = 1. - col;           // flash invert
+  o = vec4(pow(clamp(col,0.,1.), vec3(1./2.2)), 1.);
+}`;
+
+function prog(fs){
+  const p = gl.createProgram();
+  for (const [type, src] of [[gl.VERTEX_SHADER, VS], [gl.FRAGMENT_SHADER, fs]]) {
+    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    gl.attachShader(p, s);
+  }
+  gl.bindAttribLocation(p, 0, "p"); gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+const scene = prog(SCENE), post = prog(POST);
+
+gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+function tex(w, h, fmt, ifmt, type){
+  const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, w, h, 0, fmt, type, null);
+  for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.LINEAR);
+  for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+  return t;
+}
+gl.getExtension("EXT_color_buffer_float");
+const sceneTex = tex(W, H, gl.RGBA, gl.RGBA16F, gl.HALF_FLOAT);
+const fbo = gl.createFramebuffer();
+gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, sceneTex, 0);
+const txtTex = tex(W, H, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
+
+// ---------------------------------------------------------------- typography
+// Channels: R = title (difference-blended), G = HUD, B = accent red.
+const tc = document.createElement("canvas"); tc.width = W; tc.height = H;
+const cx = tc.getContext("2d");
+const GLYPHS = "█▓▒░#%&@$/\\<>=+*01ΣΔΞ";
+
+function rng(seed){ return () => (seed = (seed * 16807) % 2147483647) / 2147483647; }
+
+function drawType(frame, t, burst){
+  const r = rng(frame * 7919 + 13);
+  cx.clearRect(0, 0, W, H);
+  cx.textBaseline = "alphabetic";
+
+  // ---- title with decode scramble
+  let title = TITLE.split("").map((ch, i) => {
+    const settle = t < .12 ? (t / .12) * TITLE.length * 1.4 - i : 99;
+    return (settle < 0 || r() < burst * .45) ? GLYPHS[Math.floor(r() * GLYPHS.length)] : ch;
+  }).join("");
+  if (burst > .92) title = "[ SIGNAL LOST ]";
+  let size = 92;
+  cx.font = `900 ${size}px Unbounded`;
+  size *= Math.min(1, (W * .86) / cx.measureText(title).width);
+  cx.font = `900 ${size}px Unbounded`;
+  const tw = cx.measureText(title).width;
+  const ty = H * .5 + size * .36;
+  cx.fillStyle = "rgb(255,0,0)";
+  cx.fillText(title, (W - tw) / 2, ty);
+  // sliced ghost of the title during bursts
+  if (burst > .2) {
+    for (let k = 0; k < 4; k++) {
+      const y0 = ty - size * r(), hh = 4 + r() * 14;
+      cx.save(); cx.beginPath(); cx.rect(0, y0 - hh, W, hh); cx.clip();
+      cx.fillText(title, (W - tw) / 2 + (r() - .5) * 90 * burst, ty);
+      cx.restore();
+    }
+  }
+
+  // ---- HUD
+  cx.font = "500 11px JBM";
+  cx.fillStyle = "rgb(0,255,0)";
+  const m = 22, pad = (s, n) => String(s).padStart(n, "0");
+  const fps = 24, secs = frame / fps;
+  const tcode = `${pad(0,2)}:${pad(0,2)}:${pad(Math.floor(secs),2)}:${pad(frame % fps,2)}`;
+  cx.fillText("SKINKEBRAVIA / STUDIO", m, m + 8);
+  cx.fillText("CG — VFX — REALTIME", m, m + 24);
+  cx.textAlign = "right";
+  cx.fillText(`REC  TC ${tcode}`, W - m, m + 8);
+  cx.fillText(`FRAME ${pad(frame, 3)}/${FRAMES}`, W - m, m + 24);
+  cx.fillText("SDF · RAYMARCH · GLSL ES 3.00", W - m, H - m);
+  cx.textAlign = "left";
+  const pass = burst > .05 ? ["BEAUTY", "NORMAL", "DEPTH", "ITER"][Math.floor(r() * 4)] : "BEAUTY";
+  cx.fillText(`AOV ▸ ${pass}`, m, H - m - 16);
+  cx.fillText(`SIGNAL ${burst > .05 ? "CORRUPT" : "NOMINAL"}  0x${(frame * 2654435761 >>> 0).toString(16).toUpperCase().slice(0, 6)}`, m, H - m);
+  cx.textAlign = "center";
+  cx.fillText("COMPUTER GRAPHICS  ⁄  RENDERING  ⁄  VISUAL EFFECTS", W / 2, H - m);
+  cx.textAlign = "left";
+
+  // crop marks
+  cx.fillRect(m - 12, m - 12, 16, 1); cx.fillRect(m - 12, m - 12, 1, 16);
+  cx.fillRect(W - m - 4, m - 12, 16, 1); cx.fillRect(W - m + 11, m - 12, 1, 16);
+  cx.fillRect(m - 12, H - m + 11, 16, 1); cx.fillRect(m - 12, H - m - 4, 1, 16);
+  cx.fillRect(W - m - 4, H - m + 11, 16, 1); cx.fillRect(W - m + 11, H - m - 4, 1, 16);
+
+  // accent: blinking rec dot + burst meter
+  cx.fillStyle = "rgb(0,0,255)";
+  if (frame % 24 < 14) { cx.beginPath(); cx.arc(W - m - 146, m + 4, 4, 0, 7); cx.fill(); }
+  for (let k = 0; k < 16; k++) if (k / 16 < burst + .06) cx.fillRect(m + 150 + k * 5, H - m - 24, 3, 8);
+
+  gl.bindTexture(gl.TEXTURE_2D, txtTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tc);
+}
+
+// ---------------------------------------------------------------- timeline
+// Corruption comes in authored bursts with quiet passages between them,
+// plus sparse single-frame micro glitches. Deterministic per frame.
+function burstAt(frame){
+  const t = frame / FRAMES;
+  const env = (a, b, peak) => (t >= a && t < b) ? peak * Math.sin(Math.PI * (t - a) / (b - a)) ** .5 : 0;
+  let b = Math.max(
+    t < .07 ? .85 * (1 - t / .07) : 0,  // boot: resolve out of noise
+    env(.30, .345, .7),
+    env(.56, .62, 1.0),                 // main hit, flashes SIGNAL LOST
+    t > .9 ? .8 * ((t - .9) / .1) ** 2 : 0 // build back into the loop
+  );
+  const r = rng(frame * 104729 + 7);
+  if (r() < .12) b = Math.max(b, .15 + r() * .25);
+  return Math.min(b, 1);
+}
+
+// ---------------------------------------------------------------- render
+let mouseKick = 0;
+function render(frame, seedFrame = frame){
+  const t = (frame % FRAMES) / FRAMES;
+  const burst = Math.min(1, burstAt(seedFrame % FRAMES) + mouseKick);
+  drawType(frame % FRAMES, t, burst);
+
+  gl.viewport(0, 0, W, H);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.useProgram(scene);
+  gl.uniform2f(gl.getUniformLocation(scene, "R"), W, H);
+  gl.uniform1f(gl.getUniformLocation(scene, "T"), t);
+  gl.uniform1f(gl.getUniformLocation(scene, "B"), burst);
+  gl.uniform1f(gl.getUniformLocation(scene, "S"), seedFrame + .5);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, txtTex);
+  gl.uniform1i(gl.getUniformLocation(scene, "TXT"), 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.useProgram(post);
+  gl.uniform2f(gl.getUniformLocation(post, "R"), W, H);
+  gl.uniform1f(gl.getUniformLocation(post, "T"), t);
+  gl.uniform1f(gl.getUniformLocation(post, "B"), burst);
+  gl.uniform1f(gl.getUniformLocation(post, "S"), seedFrame + .5);
+  gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+  gl.uniform1i(gl.getUniformLocation(post, "SRC"), 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+window.renderFrame = (f) => { render(f); gl.finish(); return canvas.toDataURL("image/png"); };
+window.FRAMES = FRAMES;
+
+document.fonts.load("900 40px Unbounded").then(() => document.fonts.load("500 11px JBM")).then(() => {
+  window.ready = true;
+  if (CAPTURE) return;
+  let last = 0, lx = 0, ly = 0;
+  addEventListener("pointermove", e => {
+    mouseKick = Math.min(.8, mouseKick + Math.hypot(e.clientX - lx, e.clientY - ly) / 400);
+    lx = e.clientX; ly = e.clientY;
+  });
+  const loop = (now) => {
+    const f = Math.floor(now / (1000 / 24));
+    if (f !== last) { last = f; render(f % FRAMES, f); mouseKick *= .85; }
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+});
+</script>
+</body>
+</html>

@@ -1,29 +1,32 @@
 <p align="center">
-  <img src="assets/banner.gif" alt="60,000 particles orbit a spiral galaxy, condense into the name SkinkEBravia, then detonate in a shockwave" width="100%">
+  <img src="assets/banner.gif" alt="An iridescent chrome gyroid sculpture rotates behind the word SKINKEBRAVIA while the image corrupts in bursts: torn scanlines, displaced macroblocks and leaked normal, depth and iteration render passes" width="100%">
 </p>
 
-<h3 align="center">Computer graphics · rendering · real-time VFX</h3>
+<p align="center">
+  <sub><code>COMPUTER GRAPHICS</code> &nbsp;⁄&nbsp; <code>RENDERING</code> &nbsp;⁄&nbsp; <code>VISUAL EFFECTS</code></sub>
+</p>
 
----
+<br>
 
-- 👀 I'm interested in **computer graphics**: rendering, simulation and visual effects
-- 🌱 Currently learning: CG!
-- 💞️ Looking to collaborate on: CG!
-- 📫 How to reach me: CG!
+> Pictures made from math, and what happens when the math breaks.
 
-<details>
-<summary>✨ How the banner is made</summary>
+I work on computer graphics: rendering, shaders, simulation and real-time VFX.
 
-The banner is procedural. [`assets/render_banner.py`](assets/render_banner.py) renders it frame by frame on the CPU with NumPy:
+<br>
 
-- **60k particles** on differentially rotating orbits in a three-armed log-spiral galaxy, bent by a periodic domain warp so the motion looks like fluid
-- **Morph → hold → detonate**: the particles ease into the rasterized name from left to right, shimmer, then get a radial impulse with an expanding shockwave ring
-- **Additive splatting** with 4× sub-frame **motion blur**, three-scale Gaussian **bloom**, **chromatic aberration**, vignette and exponential **tone mapping**
-- Every orbit completes a whole number of laps, so the 72-frame GIF **loops seamlessly**
+### ▍ SIGNAL
 
-```sh
-pip install numpy pillow scipy
-python assets/render_banner.py
+The banner is a real-time WebGL2 piece, a render pipeline eating itself.
+
+**Pass A** raymarches a signed-distance gyroid lattice: chrome with thin-film iridescence, lit by a procedural studio of strip softboxes and coloured kickers, with ACES tone mapping. During each burst, macroblocks leak the renderer's own debug buffers (**normals**, **depth**, **march-iteration heat**) into the final image.
+
+**Pass B** corrupts the signal. It tears scanline slices, displaces and posterizes macroblocks like a datamoshed codec, smears bright pixels sideways (pixel sorting), splits the colour channels, and flashes the frame inverted at the peak. The timing is written by hand: quiet passages, one big hit, and a build back into a seamless loop.
+
+```
+studio/index.html    live piece: open it in a browser and move the mouse to disturb it
+studio/capture.mjs   deterministic frame capture (headless Chromium) → ffmpeg → assets/banner.gif
 ```
 
-</details>
+<br>
+
+<p align="center"><sub>SKINKEBRAVIA / STUDIO</sub></p>
