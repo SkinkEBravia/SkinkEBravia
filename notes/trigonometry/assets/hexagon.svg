@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="30 50 340 300" width="340" height="300" font-family="Georgia, 'Times New Roman', serif">
+  <title>Trigonometric identity hexagon</title>
+  <desc>A regular hexagon with 1 in the centre. Vertices clockwise from top-left: sin, cos, cot, csc, sec, tan. Three shaded downward-pointing triangles, (sin, cos, 1), (tan, 1, sec) and (1, cot, csc), give the three Pythagorean identities.</desc>
+  <style>
+    .bg    { fill: #ffffff; }
+    .edge  { stroke: #24292f; stroke-width: 2; fill: none; }
+    .tri   { fill: #54aeff; fill-opacity: 0.28; stroke: #0969da; stroke-width: 2; stroke-linejoin: round; }
+    .node  { fill: #ffffff; stroke: #24292f; stroke-width: 2; }
+    .one   { fill: #fff8c5; stroke: #9a6700; stroke-width: 2.5; }
+    .label { fill: #24292f; font-size: 19px; font-style: italic; text-anchor: middle; dominant-baseline: central; }
+    .big   { font-size: 24px; font-style: normal; font-weight: bold; }
+    @media (prefers-color-scheme: dark) {
+      .bg    { fill: #0d1117; }
+      .edge  { stroke: #e6edf3; }
+      .tri   { fill: #388bfd; fill-opacity: 0.30; stroke: #58a6ff; }
+      .node  { fill: #161b22; stroke: #e6edf3; }
+      .one   { fill: #3b2e00; stroke: #d29922; }
+      .label { fill: #e6edf3; }
+    }
+  </style>
+
+  <rect class="bg" x="30" y="50" width="340" height="300" rx="12"/>
+
+  <!-- shaded triangles: two "top" vertices, one "bottom" vertex -->
+  <polygon class="tri" points="135,87.4 265,87.4 200,200"/>   <!-- sin, cos, 1   -->
+  <polygon class="tri" points="70,200 200,200 135,312.6"/>    <!-- tan, 1, sec   -->
+  <polygon class="tri" points="200,200 330,200 265,312.6"/>   <!-- 1, cot, csc   -->
+
+  <!-- hexagon outline -->
+  <polygon class="edge" points="135,87.4 265,87.4 330,200 265,312.6 135,312.6 70,200"/>
+
+  <!-- vertices -->
+  <circle class="node" cx="135" cy="87.4"  r="26"/><text class="label" x="135" y="87.4">sin</text>
+  <circle class="node" cx="265" cy="87.4"  r="26"/><text class="label" x="265" y="87.4">cos</text>
+  <circle class="node" cx="70"  cy="200"   r="26"/><text class="label" x="70"  y="200">tan</text>
+  <circle class="node" cx="330" cy="200"   r="26"/><text class="label" x="330" y="200">cot</text>
+  <circle class="node" cx="135" cy="312.6" r="26"/><text class="label" x="135" y="312.6">sec</text>
+  <circle class="node" cx="265" cy="312.6" r="26"/><text class="label" x="265" y="312.6">csc</text>
+
+  <!-- centre -->
+  <circle class="one" cx="200" cy="200" r="26"/><text class="label big" x="200" y="200">1</text>
+</svg>
